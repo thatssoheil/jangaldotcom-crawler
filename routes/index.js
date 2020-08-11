@@ -8,10 +8,10 @@ const router = express.Router();
   console.log(response);
 })();
 
-/* GET home page. */
-router.get('/', async function(req, res, next) {
-  let response = await run();
-  return res.send(response);
-});
+// /* GET home page. */
+// router.get('/', async function(req, res, next) {
+//   let response = await run();
+//   return res.send(response);
+// });
 
 module.exports = router;

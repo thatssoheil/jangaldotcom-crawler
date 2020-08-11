@@ -1,51 +1,24 @@
 import axios from 'axios';
 import fs from 'fs';
 import cheerio from 'cheerio';
-import download from 'download';
 
-import XLSX from '../utils/XLSXConverter';
-import sleeper from '../utils/sleeper';
 import { config } from '../config';
+import browserLauncher from '../utils/browserLauncher'
 
 const shop = config.shop;
-
-let books = [];
-let urls = [];
-let pdfURLs = [];
 
 let pages = {
     books: []
 }
 
+let books = [];
+
 let run = async () => {
 
     let response;
-
-    response = await fetchPages();
-
-    if (response === 'success')
-        return response;
-
-    // let count = 0;
-    // for (let i = 1; i < 2; i++) {
-    //     let dynURL = url + i;
-    //     await fetchBooksURLs(dynURL);
-    //
-    //     console.log(`Fetched Page No. ${i}, [${urls.length}]`);
-    //
-    //     count++;
-    //     /*if (count % 50 === 0) {
-    //         await sleeper.sleep(180000);
-    //     }*/
-    // }
-    // console.log(`${urls.length} URLs Fetched Successfully`);
-    //
-    // await fetchBooksCoversAndPDFs();
-    // console.log('Covers and PDFs Fetched Successfully')
-    //
-    // // console.log('Exporting Data to XLSX File')
-    // // XLSX.convert(books);
-    // console.log('DONE')
+    // response = await fetchPages();
+    response = await fetch();
+    return response;
 }
 
 const fetchPages = async () => {
@@ -95,6 +68,144 @@ const fetchPages = async () => {
     } catch (e) {
         console.error(`Error: ${e}`);
     }
+}
+
+const fetch = async () => {
+    let data = await load();
+    if (data)
+        console.log('data loaded successfully');
+
+    try {
+
+        let counter = 0;
+        for (const book of data.books) {
+
+            counter++;
+            let bookJson = await fetchData(book);
+            books.push(bookJson);
+
+            if (counter % 20 === 0) {
+                let json = JSON.stringify(books);
+                await fs.writeFile(`${(new Date()).toString().replace(' ', '')}.json`, json, 'utf8',
+                        err => err ? console.error(err) : console.log(`Message: FCS, ${(new Date()).toString()}`) );
+            }
+
+            if (counter === 100)
+                break;
+        }
+    } catch (e) {
+        console.error(`Error: ${e}`);
+    }
+}
+
+const fetchData = async (book) => {
+
+    let bookUrl = `${shop.url}${book.Url}`;
+
+    const page = await browserLauncher.getInstance();
+    await page.goto(bookUrl, {
+        waitUntil: 'networkidle2'
+    });
+
+    // //LOG TEMP
+    // await page.goto('https://jangal.com/fa/product/52037/Oxford-English-Grammar-Course-Basic', {
+    //     waitUntil: 'networkidle2'
+    // });
+
+    const body = await page.evaluate(() => {
+        return document.querySelector('body').outerHTML;
+    });
+
+    let thisBook = {
+        id: book.Id,
+        title: book.Title,
+        price: book.Price,
+        currency: book.Currency,
+        seoTitle: book.SeoUrlTitle,
+        url: {
+            book: bookUrl,
+            pdf: null,
+            cover: null
+        }
+    }
+
+    // set cover url
+    const coverRelativeUrl = book.Image;
+    if (coverRelativeUrl) {
+        const absUrl = `${shop.url}${coverRelativeUrl}`;
+        thisBook.url.cover = absUrl;
+    }
+
+    console.log(`fetching: ${bookUrl}`);
+    const $ = cheerio.load(body, {
+        decodeEntities: false
+    })
+
+    // fetch pdf url
+    const pdfRelativeUrl = $('._widget').find('a[download]').attr('href').toString().trim();
+    if (pdfRelativeUrl) {
+        const absUrl = `${shop.url}${relativeUrl}`
+        thisBook.url.pdf = absUrl;
+    }
+
+
+    // fetch tags
+    let tags = [];
+    let tagSkipper = 2;
+    $('.breadcrumbs').children().each((index, element) => {
+        if (tagSkipper === 0) {
+            let tag = $(element).find('a').children('span').text().toString().trim();
+
+            if (tag !== book.Title)
+                tags.push(tag);
+        }
+        if (tagSkipper > 0)
+            tagSkipper--;
+    });
+    $('div[data-tagcloud] > ul > li').each((index, element) => {
+        let tag = $(element).find('a').children('span').text().toString().trim();
+        tags.push(tag);
+    });
+    thisBook.tags = tags;
+
+    // fetch details
+    let details = [];
+    $('.p-details').children().each((index, element) => {
+        // const tagName = $(element)[0].name.toString().trim();
+        const content = $(element).text().toString().trim();
+        details.push(content);
+    });
+    thisBook.about = details;
+
+    // fetch properties
+    let attributes = {};
+    let mode;
+    $('div[id="featureview"]').find('div > ul').each((index, element) => {
+        $(element).children('li').each((index2, element2) => {
+            if ($(element2).find('h5').children('span').text().toString().trim() !== undefined &&
+                $(element2).find('h5').children('span').text().toString().trim() !== '') {
+                mode = $(element2).find('h5').children('span').text().toString().trim();
+                if (attributes[mode] === undefined)
+                    attributes[mode] = {};
+            } else {
+                let attribute = $(element2).find('._title').children('span').text().toString().trim();
+                let value = $(element2).find('._value').children('span').text().toString().trim();
+                attributes[mode][attribute] = value;
+            }
+        });
+    });
+    thisBook.attributes = attributes;
+
+    return thisBook;
+}
+
+const fetchCover = async (coverUrl, filename) => {
+    console.log(`fetching cover: ${coverUrl}`);
+}
+
+const load = async () => {
+    let data = await fs.readFileSync('data.json');
+    return JSON.parse(data);
 }
 
 // const fetchBooksURLs = async (url) => {
@@ -179,6 +290,7 @@ const fetchPages = async () => {
 //
 //     await Promise.all(pdfURLs.map(url => download(url, 'assets/PDFs')));
 // }
+
 // let crawl = async (url) => {
 //
 //     let set = []
