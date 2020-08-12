@@ -3,7 +3,8 @@ import fs from 'fs';
 import cheerio from 'cheerio';
 
 import { config } from '../config';
-import browserLauncher from '../utils/browserLauncher'
+import browserLauncher from '../utils/browserLauncher';
+import { isLoadable, load } from '../utils/jsonLoader';
 
 const shop = config.shop;
 
@@ -11,7 +12,10 @@ let pages = {
     books: []
 }
 
-let books = [];
+let books = {
+    count : null,
+    table: []
+};
 
 let run = async () => {
 
@@ -71,27 +75,40 @@ const fetchPages = async () => {
 }
 
 const fetch = async () => {
-    let data = await load();
+
+    let data = await load('data.json');
     if (data)
-        console.log('data loaded successfully');
+        console.log('Loading raw data...');
 
     try {
 
         let counter = 0;
+        let head = -1;
+
+        if (await isLoadable('assets/JSON/organized-data.json')) {
+            console.log(`Loading previously created data...`);
+            books = await load('assets/JSON/organized-data.json');
+            head = parseInt(books.count);
+        }
+
         for (const book of data.books) {
 
-            counter++;
+            if (counter < head) {
+                counter++;
+                continue;
+            } else
+                counter++;
+
             let bookJson = await fetchData(book);
-            books.push(bookJson);
+            books.table.push(bookJson);
 
             if (counter % 20 === 0) {
+                books.count = counter;
                 let json = JSON.stringify(books);
-                await fs.writeFile(`${(new Date()).toString().replace(' ', '')}.json`, json, 'utf8',
-                        err => err ? console.error(err) : console.log(`Message: FCS, ${(new Date()).toString()}`) );
+                await fs.writeFile(`assets/JSON/organized-data.json`, json, 'utf8',
+                        err => err ? console.error(err) :
+                            console.log(`Message: Data Exported, ${(new Date()).toString()} -> Book Count: ${counter}`) );
             }
-
-            if (counter === 100)
-                break;
         }
     } catch (e) {
         console.error(`Error: ${e}`);
@@ -104,13 +121,11 @@ const fetchData = async (book) => {
 
     const page = await browserLauncher.getInstance();
     await page.goto(bookUrl, {
-        waitUntil: 'networkidle2'
+        waitUntil: 'networkidle2',
+        timeout: 0
+    }, err => {
+        console.log(`Puppeteer error: ${err}`)
     });
-
-    // //LOG TEMP
-    // await page.goto('https://jangal.com/fa/product/52037/Oxford-English-Grammar-Course-Basic', {
-    //     waitUntil: 'networkidle2'
-    // });
 
     const body = await page.evaluate(() => {
         return document.querySelector('body').outerHTML;
@@ -144,10 +159,9 @@ const fetchData = async (book) => {
     // fetch pdf url
     const pdfRelativeUrl = $('._widget').find('a[download]').attr('href').toString().trim();
     if (pdfRelativeUrl) {
-        const absUrl = `${shop.url}${relativeUrl}`
+        const absUrl = `${shop.url}${pdfRelativeUrl}`
         thisBook.url.pdf = absUrl;
     }
-
 
     // fetch tags
     let tags = [];
@@ -189,7 +203,7 @@ const fetchData = async (book) => {
                     attributes[mode] = {};
             } else {
                 let attribute = $(element2).find('._title').children('span').text().toString().trim();
-                let value = $(element2).find('._value').children('span').text().toString().trim();
+                let value = $(element2).find('._value').children('p').text().toString().trim();
                 attributes[mode][attribute] = value;
             }
         });
@@ -201,11 +215,6 @@ const fetchData = async (book) => {
 
 const fetchCover = async (coverUrl, filename) => {
     console.log(`fetching cover: ${coverUrl}`);
-}
-
-const load = async () => {
-    let data = await fs.readFileSync('data.json');
-    return JSON.parse(data);
 }
 
 // const fetchBooksURLs = async (url) => {
